@@ -1,0 +1,9 @@
+# Infraestrutura e segurança requerem review do Security Team
+/infra/**/*.tf          @org/security-team
+/envs/**/*.tfvars       @org/security-team
+.checkov.yml            @org/security-team
+.checkov.baseline       @org/security-team
+
+# Workflows requerem review do Platform Team
+/.github/workflows/     @org/platform-team
+/.github/CODEOWNERS     @org/platform-team @org/security-team

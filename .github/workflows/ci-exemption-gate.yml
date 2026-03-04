@@ -1,0 +1,88 @@
+# ═══════════════════════════════════════════════════════════
+# WF3: ci-exemption-gate.yml — Gate Check de Aprovação
+# Verifica se todos os WIs de exemption estão aprovados no ADO.
+# Required status check: "Security Exemption Gate"
+# ═══════════════════════════════════════════════════════════
+name: Security Exemption Gate
+
+on:
+  # Trigger manual via comentário no PR
+  issue_comment:
+    types: [created]
+  # Trigger automático via ADO Service Hook
+  repository_dispatch:
+    types: [exemption-status-changed]
+
+jobs:
+  gate-check:
+    # Só executa em comentários /check-exemptions ou via dispatch
+    if: >
+      (github.event_name == 'repository_dispatch') ||
+      (github.event_name == 'issue_comment' &&
+       contains(github.event.comment.body, '/check-exemptions'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      statuses: write
+
+    steps:
+      - name: Get PR info
+        id: pr
+        run: |
+          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            PR_NUMBER="${{ github.event.client_payload.pr_number }}"
+          else
+            PR_NUMBER="${{ github.event.issue.number }}"
+          fi
+          echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
+
+      - name: Query ADO for pending Work Items
+        id: ado
+        env:
+          ADO_PAT: ${{ secrets.ADO_PAT }}
+          ADO_ORG_URL: ${{ secrets.ADO_ORG_URL }}
+          ADO_PROJECT: ${{ secrets.ADO_PROJECT }}
+          PR_NUMBER: ${{ steps.pr.outputs.pr_number }}
+        run: |
+          # TODO: Implementar WIQL query
+          # SELECT [System.Id], [System.State]
+          # FROM workitems
+          # WHERE [System.Tags] CONTAINS 'security-exemption'
+          #   AND [Custom.PRLink] CONTAINS 'pull/$PR_NUMBER'
+          #   AND [System.State] NOT IN ('Approved', 'Rejected', 'Closed')
+          #
+          # Se count == 0 → gate open
+          # Se count > 0  → gate closed
+
+          echo "pending_count=0" >> $GITHUB_OUTPUT
+          echo "total_count=0" >> $GITHUB_OUTPUT
+          echo "approved_count=0" >> $GITHUB_OUTPUT
+          echo "::warning::ADO query not yet implemented — defaulting to gate open"
+
+      - name: Set commit status
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pending = parseInt('${{ steps.ado.outputs.pending_count }}');
+            const total = parseInt('${{ steps.ado.outputs.total_count }}');
+            const approved = parseInt('${{ steps.ado.outputs.approved_count }}');
+
+            const state = (pending === 0) ? 'success' : 'failure';
+            const description = (total === 0)
+              ? 'No exemptions required'
+              : (pending === 0)
+                ? `All ${approved} exemptions approved`
+                : `${pending}/${total} exemptions pending review`;
+
+            // TODO: Get SHA from PR
+            // await github.rest.repos.createCommitStatus({
+            //   owner: context.repo.owner,
+            //   repo: context.repo.repo,
+            //   sha: sha,
+            //   state: state,
+            //   description: description,
+            //   context: 'Security Exemption Gate',
+            //   target_url: `${process.env.ADO_ORG_URL}/${process.env.ADO_PROJECT}/_backlogs`
+            // });
+
+            console.log(`Gate status: ${state} — ${description}`);

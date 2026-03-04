@@ -1,0 +1,74 @@
+# ═══════════════════════════════════════════════════════════
+# WF4: cd-deploy.yml — Terraform Plan + Apply
+# Deploya para o ambiente correspondente ao branch.
+# ═══════════════════════════════════════════════════════════
+name: Deploy Infrastructure
+
+on:
+  push:
+    branches: [develop, non-prd, main]
+
+permissions:
+  contents: read
+  id-token: write  # OIDC federation com AWS
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect environment
+        id: env
+        run: |
+          BRANCH="${{ github.ref_name }}"
+          case "$BRANCH" in
+            develop)
+              echo "env=sandbox"       >> $GITHUB_OUTPUT
+              echo "tfvars=envs/sandbox.tfvars" >> $GITHUB_OUTPUT
+              echo "role_secret=AWS_ROLE_ARN_SANDBOX" >> $GITHUB_OUTPUT
+              ;;
+            non-prd)
+              echo "env=non-prd"       >> $GITHUB_OUTPUT
+              echo "tfvars=envs/non-prd.tfvars" >> $GITHUB_OUTPUT
+              echo "role_secret=AWS_ROLE_ARN_NONPRD" >> $GITHUB_OUTPUT
+              ;;
+            main)
+              echo "env=prd"           >> $GITHUB_OUTPUT
+              echo "tfvars=envs/prd.tfvars" >> $GITHUB_OUTPUT
+              echo "role_secret=AWS_ROLE_ARN_PRD" >> $GITHUB_OUTPUT
+              ;;
+          esac
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets[steps.env.outputs.role_secret] }}
+          aws-region: us-east-1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.7.0"
+
+      - name: Terraform Init
+        working-directory: infra
+        run: |
+          terraform init \
+            -backend-config="bucket=tfstate-${{ steps.env.outputs.env }}" \
+            -backend-config="key=project-workload/terraform.tfstate" \
+            -backend-config="region=us-east-1" \
+            -backend-config="dynamodb_table=terraform-locks" \
+            -backend-config="encrypt=true"
+
+      - name: Terraform Plan
+        working-directory: infra
+        run: |
+          terraform plan \
+            -var-file="${{ steps.env.outputs.tfvars }}" \
+            -out=plan.tfplan
+
+      - name: Terraform Apply
+        working-directory: infra
+        run: terraform apply plan.tfplan

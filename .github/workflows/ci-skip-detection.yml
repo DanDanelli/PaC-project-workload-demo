@@ -1,0 +1,126 @@
+# ═══════════════════════════════════════════════════════════
+# WF2: ci-skip-detection.yml — Detecta checkov:skip e cria WIs
+# Modo Normal: detecta NOVOS skips no diff.
+# Modo Promoção (D-09): detecta TODOS os skips no codebase.
+# ═══════════════════════════════════════════════════════════
+name: Skip Detection
+
+on:
+  pull_request:
+    branches: [develop, non-prd, main]
+
+jobs:
+  detect-skips:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Histórico completo para git diff
+
+      - name: Detect promotion mode (D-08, D-09)
+        id: mode
+        run: |
+          BASE="${{ github.base_ref }}"
+          HEAD="${{ github.head_ref }}"
+          PROMO_BRANCHES="develop|non-prd|main"
+
+          if [[ "$BASE" =~ ^($PROMO_BRANCHES)$ ]] && \
+             [[ "$HEAD" =~ ^($PROMO_BRANCHES)$ ]]; then
+            echo "is_promotion=true" >> $GITHUB_OUTPUT
+            echo "MODE: Promoção ($HEAD → $BASE) — scan ALL skips"
+          else
+            echo "is_promotion=false" >> $GITHUB_OUTPUT
+            echo "MODE: Normal — scan NEW skips only"
+          fi
+
+          # Detect target environment
+          case "$BASE" in
+            develop) echo "target_env=sandbox" >> $GITHUB_OUTPUT ;;
+            non-prd) echo "target_env=non-prd" >> $GITHUB_OUTPUT ;;
+            main)    echo "target_env=prd"     >> $GITHUB_OUTPUT ;;
+            *)       echo "target_env=sandbox" >> $GITHUB_OUTPUT ;;
+          esac
+
+      - name: Scan for skips
+        id: scan
+        run: |
+          if [ "${{ steps.mode.outputs.is_promotion }}" = "true" ]; then
+            # Modo Promoção: scan ALL skips in codebase
+            SKIPS=$(grep -rn 'checkov:skip\|checkov.io/skip' \
+              --include='*.tf' --include='*.yml' --include='*.yaml' \
+              ./infra/ || true)
+          else
+            # Modo Normal: scan only NEW skips in PR diff
+            BASE="${{ github.base_ref }}"
+            SKIPS=$(git diff origin/$BASE...HEAD --unified=0 \
+              -- '*.tf' '*.yml' '*.yaml' '*.json' \
+              | grep -E '^\+.*checkov:skip|^\+.*checkov.io/skip' || true)
+          fi
+
+          if [ -z "$SKIPS" ]; then
+            echo "skip_count=0" >> $GITHUB_OUTPUT
+            echo "No skips detected."
+          else
+            SKIP_COUNT=$(echo "$SKIPS" | wc -l)
+            echo "skip_count=$SKIP_COUNT" >> $GITHUB_OUTPUT
+            echo "$SKIPS" > /tmp/skips.txt
+            echo "Detected $SKIP_COUNT skip(s)."
+          fi
+
+      - name: Create Work Items in ADO
+        if: steps.scan.outputs.skip_count != '0'
+        env:
+          ADO_PAT: ${{ secrets.ADO_PAT }}
+          ADO_ORG_URL: ${{ secrets.ADO_ORG_URL }}
+          ADO_PROJECT: ${{ secrets.ADO_PROJECT }}
+          TARGET_ENV: ${{ steps.mode.outputs.target_env }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # TODO: Implementar parsing de skips e criação de Work Items via ADO REST API
+          # Para cada skip:
+          #   1. Extrair rule_id, justificativa, arquivo, linha
+          #   2. Verificar idempotência (WIQL: já existe WI para rule_id + PR?)
+          #   3. Criar WI tipo "Security Exemption" se não existe
+          #   4. Adicionar tags: security-exemption, auto-created, env:$TARGET_ENV
+          echo "::warning::Work Item creation not yet implemented"
+
+      - name: Post PR comment
+        if: steps.scan.outputs.skip_count != '0'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const mode = '${{ steps.mode.outputs.is_promotion }}' === 'true' ? 'Promoção' : 'Normal';
+            const count = '${{ steps.scan.outputs.skip_count }}';
+            const env = '${{ steps.mode.outputs.target_env }}';
+
+            let body = `## 🔍 Checkov Skips Detectados\n\n`;
+            body += `**Modo:** ${mode} | **Target:** \`${env}\` | **Skips:** ${count}\n\n`;
+            body += `| Rule | Arquivo | Justificativa | Work Item |\n`;
+            body += `|------|---------|---------------|-----------|`\n`;
+            body += `| _TODO_ | _parse skips_ | _parse justification_ | _WI link_ |\n\n`;
+            body += `**Ação necessária:** Security Team deve revisar no [ADO Board](${{ secrets.ADO_ORG_URL }}/${{ secrets.ADO_PROJECT }}/_backlogs).\n\n`;
+            body += `/cc @org/security-team`;
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: body
+            });
+
+      - name: Add label if skips found
+        if: steps.scan.outputs.skip_count != '0'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              labels: ['security-exemption-review']
+            });

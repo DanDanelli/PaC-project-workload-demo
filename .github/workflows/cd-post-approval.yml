@@ -1,0 +1,97 @@
+# ═══════════════════════════════════════════════════════════
+# WF5: cd-post-approval.yml — SCP Exception (v1)
+# Chamado pelo ADO Service Hook quando WI é aprovado.
+# Cria PR no repo aws-organizations-terraform para
+# adicionar exception de SCP.
+# ═══════════════════════════════════════════════════════════
+name: Post-Approval SCP Exception
+
+on:
+  repository_dispatch:
+    types: [exemption-approved]
+
+jobs:
+  create-scp-exception:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Parse inputs
+        id: inputs
+        run: |
+          echo "work_item_id=${{ github.event.client_payload.work_item_id }}" >> $GITHUB_OUTPUT
+          echo "checkov_rule_id=${{ github.event.client_payload.checkov_rule_id }}" >> $GITHUB_OUTPUT
+          echo "resource_id=${{ github.event.client_payload.resource_id }}" >> $GITHUB_OUTPUT
+          echo "target_env=${{ github.event.client_payload.target_env }}" >> $GITHUB_OUTPUT
+          echo "pr_number=${{ github.event.client_payload.pr_number }}" >> $GITHUB_OUTPUT
+
+      - name: Checkout aws-organizations-terraform
+        uses: actions/checkout@v4
+        with:
+          repository: org/aws-organizations-terraform
+          token: ${{ secrets.ORG_REPO_TOKEN }}
+
+      - name: Create SCP exception file
+        run: |
+          TARGET_ENV="${{ steps.inputs.outputs.target_env }}"
+          RULE_ID="${{ steps.inputs.outputs.checkov_rule_id }}"
+          WI_ID="${{ steps.inputs.outputs.work_item_id }}"
+          RESOURCE_ID="${{ steps.inputs.outputs.resource_id }}"
+
+          # TODO: Implementar mapeamento rule_id → SCP statement
+          # Criar arquivo em scps/exceptions/
+          EXCEPTION_FILE="scps/exceptions/project-${RULE_ID}-WI${WI_ID}.json"
+
+          echo "::warning::SCP exception creation not yet fully implemented"
+          echo "Would create: $EXCEPTION_FILE"
+          echo "For resource: $RESOURCE_ID in $TARGET_ENV"
+
+      - name: Create PR in aws-organizations-terraform
+        env:
+          GH_TOKEN: ${{ secrets.ORG_REPO_TOKEN }}
+        run: |
+          WI_ID="${{ steps.inputs.outputs.work_item_id }}"
+          RULE_ID="${{ steps.inputs.outputs.checkov_rule_id }}"
+
+          # TODO: Implementar criação de branch + PR
+          # git checkout -b "scp-exception/WI-${WI_ID}-${RULE_ID}"
+          # git add scps/exceptions/
+          # git commit -m "Add SCP exception for ${RULE_ID} (WI #${WI_ID})"
+          # git push origin "scp-exception/WI-${WI_ID}-${RULE_ID}"
+          # gh pr create --title "SCP Exception: ${RULE_ID}" --body "..."
+
+          echo "::warning::PR creation not yet implemented"
+
+      - name: Update ADO Work Item with SCP PR link
+        env:
+          ADO_PAT: ${{ secrets.ADO_PAT }}
+          ADO_ORG_URL: ${{ secrets.ADO_ORG_URL }}
+          ADO_PROJECT: ${{ secrets.ADO_PROJECT }}
+        run: |
+          WI_ID="${{ steps.inputs.outputs.work_item_id }}"
+          # TODO: PATCH ADO WI com link do PR de SCP exception
+          echo "::warning::ADO update not yet implemented"
+
+      - name: Post comment on original PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = '${{ steps.inputs.outputs.pr_number }}';
+            const ruleId = '${{ steps.inputs.outputs.checkov_rule_id }}';
+            const wiId = '${{ steps.inputs.outputs.work_item_id }}';
+
+            // TODO: Include actual SCP PR link
+            const body = `## ✅ Exemption Approved\n\n` +
+              `**Rule:** \`${ruleId}\` | **WI:** #${wiId}\n\n` +
+              `SCP exception PR will be created in aws-organizations-terraform.\n` +
+              `Security Team approval required for the SCP change.`;
+
+            // await github.rest.issues.createComment({
+            //   owner: context.repo.owner,
+            //   repo: context.repo.repo,
+            //   issue_number: parseInt(prNumber),
+            //   body: body
+            // });
+
+            console.log(`Would post comment on PR #${prNumber}`);

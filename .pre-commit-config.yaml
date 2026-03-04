@@ -1,0 +1,19 @@
+repos:
+  - repo: https://github.com/bridgecrewio/checkov
+    rev: '3.2.0'   # Fixar mesma versão do pipeline
+    hooks:
+      - id: checkov
+        args:
+          - '--framework'
+          - 'terraform'
+          - '--config-file'
+          - '../cloud-policies-check/.checkov.yml'
+          - '--external-checks-dir'
+          - '../cloud-policies-check/checks/'
+          - '--compact'
+          - '--quiet'
+          - '--skip-check'
+          - 'CKV2_AWS_62,CKV2_AWS_61,CKV_AWS_144'
+          # CKV2_AWS_62: S3 event notifications — não obrigatório na v1
+          # CKV2_AWS_61: S3 lifecycle — não obrigatório na v1
+          # CKV_AWS_144: S3 cross-region replication — não obrigatório na v1
