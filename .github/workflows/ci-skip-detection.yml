@@ -101,7 +101,7 @@ jobs:
             let body = `## 🔍 Checkov Skips Detectados\n\n`;
             body += `**Modo:** ${mode} | **Target:** \`${env}\` | **Skips:** ${count}\n\n`;
             body += `| Rule | Arquivo | Justificativa | Work Item |\n`;
-            body += `|------|---------|---------------|-----------|`\n`;
+            body += `|------|---------|---------------|-----------|\n`;
             body += `| _TODO_ | _parse skips_ | _parse justification_ | _WI link_ |\n\n`;
             body += `**Ação necessária:** Security Team deve revisar no [ADO Board](${{ secrets.ADO_ORG_URL }}/${{ secrets.ADO_PROJECT }}/_backlogs).\n\n`;
             body += `/cc @org/security-team`;
