@@ -56,7 +56,7 @@ jobs:
       - name: Set tfvars path
         id: env
         run: |
-          echo "tfvars=infra/envs/${{ inputs.environment }}.tfvars" >> $GITHUB_OUTPUT
+          echo "tfvars=envs/${{ inputs.environment }}.tfvars" >> $GITHUB_OUTPUT
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
