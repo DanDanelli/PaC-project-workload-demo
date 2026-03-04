@@ -1,26 +1,26 @@
-## Descrição
+## Description
 
-<!-- Descreva as alterações realizadas -->
+<!-- Describe the changes made in this PR -->
 
-## Impacto de Segurança
+## Security Impact
 
-- [ ] Nenhuma alteração em recursos de segurança (IAM, SG, KMS, etc.)
-- [ ] Alteração em recursos de segurança — justificativa abaixo:
+- [ ] No changes to security resources (IAM, SG, KMS, etc.)
+- [ ] Changes to security resources — justification below:
 
-<!-- Se marcou a segunda opção, justifique -->
+<!-- If you checked the second option, provide justification -->
 
 ## Checkov Skips
 
-- [ ] Nenhum checkov:skip adicionado neste PR
-- [ ] Adicionado checkov:skip com justificativa — detalhes abaixo:
+- [ ] No checkov:skip added in this PR
+- [ ] Added checkov:skip with justification — details below:
 
-| Rule ID | Arquivo | Justificativa |
-|---------|---------|---------------|
-|         |         |               |
+| Rule ID | File | Justification |
+|---------|------|---------------|
+|         |      |               |
 
 ## Checklist
 
-- [ ] Terraform validate executado com sucesso
-- [ ] Pre-commit hook (Checkov) executado localmente
-- [ ] Variáveis de ambiente atualizadas nos tfvars (se aplicável)
-- [ ] Documentação atualizada (se aplicável)
+- [ ] Terraform validate executed successfully
+- [ ] Pre-commit hook (Checkov) run locally
+- [ ] Environment variables updated in tfvars (if applicable)
+- [ ] Documentation updated (if applicable)
