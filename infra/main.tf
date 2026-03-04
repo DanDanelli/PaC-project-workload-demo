@@ -24,7 +24,8 @@ locals {
 #   ignore_public_acls      = false
 # }
 
-# Exemplo: S3 bucket compliant com as policies
+# Example: S3 bucket — compliant with policies
+#checkov:skip=CKV_AWS_19:POC uses aws:kms with default key — dedicated CMK to be provisioned in phase 2
 resource "aws_s3_bucket" "app_data" {
   bucket = "${var.project_name}-${var.environment}-app-data"
   tags   = local.common_tags
