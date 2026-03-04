@@ -94,9 +94,9 @@ jobs:
               r2.raise_for_status()
               items = r2.json().get('value', [])
 
-              # "Done" = approved by Security Team
-              pending  = [i for i in items if i['fields']['System.State'] != 'Closed']
-              approved = [i for i in items if i['fields']['System.State'] == 'Closed']
+              # "Done" = approved by Security Team (ADO Basic process)
+              pending  = [i for i in items if i['fields']['System.State'] != 'Done']
+              approved = [i for i in items if i['fields']['System.State'] == 'Done']
 
               result = {
                   'total':    total,
@@ -149,7 +149,7 @@ jobs:
             const result = JSON.parse(fs.readFileSync('/tmp/gate_result.json', 'utf8'));
             let rows = '';
             for (const item of result.items || []) {
-              const icon = item.state === 'Closed' ? '✅' : '⏳';
+              const icon = item.state === 'Done' ? '✅' : '⏳';
               rows += `| #${item.id} | ${item.title} | ${icon} ${item.state} |\n`;
             }
 
@@ -158,7 +158,7 @@ jobs:
               (total === 0
                 ? '_No exemption Work Items found for this PR._\n'
                 : `| WI | Title | Status |\n|----|----|------|\n${rows}\n`) +
-              (pending > 0 ? `\n> **${pending} WI(s) still pending.** Security Team must set them to **Closed** in ADO, then re-run \`/check-exemptions\`.` : '');
+              (pending > 0 ? `\n> **${pending} WI(s) still pending.** Security Team must set them to **Done** in ADO, then re-run \`/check-exemptions\`.` : '');
 
             await github.rest.issues.createComment({
               owner:        context.repo.owner,
