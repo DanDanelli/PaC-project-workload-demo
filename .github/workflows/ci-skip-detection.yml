@@ -15,6 +15,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
+      actions: write
 
     steps:
       - uses: actions/checkout@v4
@@ -195,4 +196,21 @@ jobs:
               repo: context.repo.repo,
               issue_number: context.issue.number,
               labels: ['security-exemption-review']
+            });
+
+      - name: Trigger Exemption Gate (initial pending status)
+        if: steps.scan.outputs.skip_count != '0'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // Dispatch to gate so it sets "failure" commit status immediately,
+            // blocking merge until Security Team approves in ADO.
+            await github.rest.repos.createDispatchEvent({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              event_type: 'exemption-status-changed',
+              client_payload: {
+                pr_number: String(context.issue.number),
+                sha:       context.payload.pull_request.head.sha
+              }
             });
