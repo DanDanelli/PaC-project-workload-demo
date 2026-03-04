@@ -1,5 +1,5 @@
-# POC — state local (sem backend remoto)
-# Para produção, descomentar e configurar o backend S3:
+# POC — local state (no remote backend)
+# For production, uncomment and configure the S3 backend:
 #
 # terraform {
 #   backend "s3" {
