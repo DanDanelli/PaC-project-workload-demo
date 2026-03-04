@@ -15,6 +15,7 @@ permissions:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    if: ${{ secrets.AWS_ROLE_ARN != '' }}  # Fase 4 — pula se AWS não configurado
 
     steps:
       - uses: actions/checkout@v4
@@ -24,27 +25,15 @@ jobs:
         run: |
           BRANCH="${{ github.ref_name }}"
           case "$BRANCH" in
-            develop)
-              echo "env=sandbox"       >> $GITHUB_OUTPUT
-              echo "tfvars=envs/sandbox.tfvars" >> $GITHUB_OUTPUT
-              echo "role_secret=AWS_ROLE_ARN_SANDBOX" >> $GITHUB_OUTPUT
-              ;;
-            non-prd)
-              echo "env=non-prd"       >> $GITHUB_OUTPUT
-              echo "tfvars=envs/non-prd.tfvars" >> $GITHUB_OUTPUT
-              echo "role_secret=AWS_ROLE_ARN_NONPRD" >> $GITHUB_OUTPUT
-              ;;
-            main)
-              echo "env=prd"           >> $GITHUB_OUTPUT
-              echo "tfvars=envs/prd.tfvars" >> $GITHUB_OUTPUT
-              echo "role_secret=AWS_ROLE_ARN_PRD" >> $GITHUB_OUTPUT
-              ;;
+            develop) echo "env=sandbox"  >> $GITHUB_OUTPUT ; echo "tfvars=envs/sandbox.tfvars" >> $GITHUB_OUTPUT ;;
+            non-prd) echo "env=non-prd"  >> $GITHUB_OUTPUT ; echo "tfvars=envs/non-prd.tfvars" >> $GITHUB_OUTPUT ;;
+            main)    echo "env=prd"      >> $GITHUB_OUTPUT ; echo "tfvars=envs/prd.tfvars"     >> $GITHUB_OUTPUT ;;
           esac
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets[steps.env.outputs.role_secret] }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}  # poc-workload-deploy (conta única na POC)
           aws-region: us-east-1
 
       - name: Setup Terraform
@@ -54,13 +43,7 @@ jobs:
 
       - name: Terraform Init
         working-directory: infra
-        run: |
-          terraform init \
-            -backend-config="bucket=tfstate-${{ steps.env.outputs.env }}" \
-            -backend-config="key=project-workload/terraform.tfstate" \
-            -backend-config="region=us-east-1" \
-            -backend-config="dynamodb_table=terraform-locks" \
-            -backend-config="encrypt=true"
+        run: terraform init -backend=false  # POC — state local (sem backend remoto)
 
       - name: Terraform Plan
         working-directory: infra

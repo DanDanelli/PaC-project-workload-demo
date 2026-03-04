@@ -37,6 +37,7 @@ resource "aws_s3_bucket_versioning" "app_data" {
   }
 }
 
+
 resource "aws_s3_bucket_server_side_encryption_configuration" "app_data" {
   bucket = aws_s3_bucket.app_data.id
   rule {
@@ -54,6 +55,7 @@ resource "aws_s3_bucket_public_access_block" "app_data" {
   ignore_public_acls      = true
   restrict_public_buckets = true
 }
+
 
 resource "aws_s3_bucket_logging" "app_data" {
   bucket        = aws_s3_bucket.app_data.id
