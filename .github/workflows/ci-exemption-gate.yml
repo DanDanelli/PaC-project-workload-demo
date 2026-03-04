@@ -1,21 +1,21 @@
 # ═══════════════════════════════════════════════════════════
-# WF3: ci-exemption-gate.yml — Gate Check de Aprovação
-# Verifica se todos os WIs de exemption estão aprovados no ADO.
+# WF3: ci-exemption-gate.yml — Approval Gate Check
+# Checks if all exemption WIs are approved in ADO.
 # Required status check: "Security Exemption Gate"
 # ═══════════════════════════════════════════════════════════
 name: Security Exemption Gate
 
 on:
-  # Trigger manual via comentário no PR
+  # Manual trigger via comment on PR
   issue_comment:
     types: [created]
-  # Trigger automático via ADO Service Hook
+  # Automatic trigger via ADO Service Hook
   repository_dispatch:
     types: [exemption-status-changed]
 
 jobs:
   gate-check:
-    # Só executa em comentários /check-exemptions ou via dispatch
+    # Only runs on /check-exemptions comments or via dispatch
     if: >
       (github.event_name == 'repository_dispatch') ||
       (github.event_name == 'issue_comment' &&
@@ -44,15 +44,15 @@ jobs:
           ADO_PROJECT: ${{ secrets.ADO_PROJECT }}
           PR_NUMBER: ${{ steps.pr.outputs.pr_number }}
         run: |
-          # TODO: Implementar WIQL query
+          # TODO: Implement WIQL query
           # SELECT [System.Id], [System.State]
           # FROM workitems
           # WHERE [System.Tags] CONTAINS 'security-exemption'
           #   AND [Custom.PRLink] CONTAINS 'pull/$PR_NUMBER'
           #   AND [System.State] NOT IN ('Approved', 'Rejected', 'Closed')
           #
-          # Se count == 0 → gate open
-          # Se count > 0  → gate closed
+          # If count == 0 → gate open
+          # If count > 0  → gate closed
 
           echo "pending_count=0" >> $GITHUB_OUTPUT
           echo "total_count=0" >> $GITHUB_OUTPUT
