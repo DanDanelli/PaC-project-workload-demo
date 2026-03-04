@@ -130,7 +130,7 @@ jobs:
                   {"op": "add", "path": "/fields/System.Description", "value": f"<b>Rule:</b> {rule_id}<br><b>File:</b> {file_ref}<br><b>Justification:</b> {justification}<br><b>PR:</b> <a href='{pr_url}'>#{pr_number}</a><br><b>Environment:</b> {target_env}"},
                   {"op": "add", "path": "/fields/System.Tags",        "value": f"security-exemption; PR-{pr_number}; {rule_id}; env:{target_env}; auto-created"},
               ]
-              r = requests.post(f'{ado_org_url}/{ado_project}/_apis/wit/workitems/$Task?api-version=7.1', json=body, headers=headers)
+              r = requests.post(f'{ado_org_url}/{ado_project}/_apis/wit/workitems/$Issue?api-version=7.1', json=body, headers=headers)
               if r.status_code == 200:
                   wi = r.json()
                   wi_id  = wi['id']
