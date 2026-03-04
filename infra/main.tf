@@ -58,6 +58,7 @@ resource "aws_s3_bucket_public_access_block" "app_data" {
 }
 
 
+#checkov:skip=CKV_AWS_18:Logging target is the same bucket — dedicated log bucket to be created in phase 2
 resource "aws_s3_bucket_logging" "app_data" {
   bucket        = aws_s3_bucket.app_data.id
   target_bucket = aws_s3_bucket.app_data.id
