@@ -1,0 +1,5 @@
+aws_region   = "us-east-1"
+environment  = "sandbox"
+project_name = "pac-poc"
+owner        = "team@example.com"
+cost_center  = "poc"

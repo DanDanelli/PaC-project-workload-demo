@@ -1,6 +1,7 @@
 # ═══════════════════════════════════════════════════════════
 # WF4: cd-deploy.yml — Terraform Plan + Apply
-# Deploya para o ambiente correspondente ao branch.
+# Deploys to the environment corresponding to the branch.
+# Requires AWS_ROLE_ARN repository secret to be configured.
 # ═══════════════════════════════════════════════════════════
 name: Deploy Infrastructure
 
@@ -10,10 +11,31 @@ on:
 
 permissions:
   contents: read
-  id-token: write  # OIDC federation com AWS
+  id-token: write  # OIDC federation with AWS
 
 jobs:
+  # ── Guard job: checks if AWS_ROLE_ARN is configured ──────
+  check-aws:
+    runs-on: ubuntu-latest
+    outputs:
+      configured: ${{ steps.check.outputs.configured }}
+    steps:
+      - name: Check AWS_ROLE_ARN secret
+        id: check
+        env:
+          AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+        run: |
+          if [ -n "$AWS_ROLE_ARN" ]; then
+            echo "configured=true" >> $GITHUB_OUTPUT
+          else
+            echo "configured=false" >> $GITHUB_OUTPUT
+            echo "::notice::AWS_ROLE_ARN not configured — skipping deployment. Set the secret to enable Phase 3+."
+          fi
+
+  # ── Deploy job: runs only when AWS is configured ─────────
   deploy:
+    needs: check-aws
+    if: needs.check-aws.outputs.configured == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -24,27 +46,15 @@ jobs:
         run: |
           BRANCH="${{ github.ref_name }}"
           case "$BRANCH" in
-            develop)
-              echo "env=sandbox"       >> $GITHUB_OUTPUT
-              echo "tfvars=envs/sandbox.tfvars" >> $GITHUB_OUTPUT
-              echo "role_secret=AWS_ROLE_ARN_SANDBOX" >> $GITHUB_OUTPUT
-              ;;
-            non-prd)
-              echo "env=non-prd"       >> $GITHUB_OUTPUT
-              echo "tfvars=envs/non-prd.tfvars" >> $GITHUB_OUTPUT
-              echo "role_secret=AWS_ROLE_ARN_NONPRD" >> $GITHUB_OUTPUT
-              ;;
-            main)
-              echo "env=prd"           >> $GITHUB_OUTPUT
-              echo "tfvars=envs/prd.tfvars" >> $GITHUB_OUTPUT
-              echo "role_secret=AWS_ROLE_ARN_PRD" >> $GITHUB_OUTPUT
-              ;;
+            develop) echo "env=sandbox"  >> $GITHUB_OUTPUT ; echo "tfvars=envs/sandbox.tfvars" >> $GITHUB_OUTPUT ;;
+            non-prd) echo "env=non-prd"  >> $GITHUB_OUTPUT ; echo "tfvars=envs/non-prd.tfvars" >> $GITHUB_OUTPUT ;;
+            main)    echo "env=prd"      >> $GITHUB_OUTPUT ; echo "tfvars=envs/prd.tfvars"     >> $GITHUB_OUTPUT ;;
           esac
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets[steps.env.outputs.role_secret] }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}  # poc-workload-deploy (single account in POC)
           aws-region: us-east-1
 
       - name: Setup Terraform
@@ -54,13 +64,7 @@ jobs:
 
       - name: Terraform Init
         working-directory: infra
-        run: |
-          terraform init \
-            -backend-config="bucket=tfstate-${{ steps.env.outputs.env }}" \
-            -backend-config="key=project-workload/terraform.tfstate" \
-            -backend-config="region=us-east-1" \
-            -backend-config="dynamodb_table=terraform-locks" \
-            -backend-config="encrypt=true"
+        run: terraform init -backend=false  # POC — local state (no remote backend)
 
       - name: Terraform Plan
         working-directory: infra

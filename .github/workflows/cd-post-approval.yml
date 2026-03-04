@@ -1,8 +1,8 @@
 # ═══════════════════════════════════════════════════════════
 # WF5: cd-post-approval.yml — SCP Exception (v1)
-# Chamado pelo ADO Service Hook quando WI é aprovado.
-# Cria PR no repo aws-organizations-terraform para
-# adicionar exception de SCP.
+# Called by ADO Service Hook when WI is approved.
+# Creates PR in aws-organizations-terraform repo to
+# add SCP exception.
 # ═══════════════════════════════════════════════════════════
 name: Post-Approval SCP Exception
 
@@ -13,6 +13,8 @@ on:
 jobs:
   create-scp-exception:
     runs-on: ubuntu-latest
+    # Phase 4 workflow — only triggered explicitly via repository_dispatch (ADO Service Hook).
+    # Requires secrets: AWS_ROLE_ARN, ORG_REPO_TOKEN, ADO_PAT, ADO_ORG_URL, ADO_PROJECT.
     permissions:
       contents: read
 
@@ -39,8 +41,8 @@ jobs:
           WI_ID="${{ steps.inputs.outputs.work_item_id }}"
           RESOURCE_ID="${{ steps.inputs.outputs.resource_id }}"
 
-          # TODO: Implementar mapeamento rule_id → SCP statement
-          # Criar arquivo em scps/exceptions/
+          # TODO: Implement rule_id → SCP statement mapping
+          # Create file in scps/exceptions/
           EXCEPTION_FILE="scps/exceptions/project-${RULE_ID}-WI${WI_ID}.json"
 
           echo "::warning::SCP exception creation not yet fully implemented"
@@ -54,7 +56,7 @@ jobs:
           WI_ID="${{ steps.inputs.outputs.work_item_id }}"
           RULE_ID="${{ steps.inputs.outputs.checkov_rule_id }}"
 
-          # TODO: Implementar criação de branch + PR
+          # TODO: Implement branch creation + PR
           # git checkout -b "scp-exception/WI-${WI_ID}-${RULE_ID}"
           # git add scps/exceptions/
           # git commit -m "Add SCP exception for ${RULE_ID} (WI #${WI_ID})"
@@ -70,7 +72,7 @@ jobs:
           ADO_PROJECT: ${{ secrets.ADO_PROJECT }}
         run: |
           WI_ID="${{ steps.inputs.outputs.work_item_id }}"
-          # TODO: PATCH ADO WI com link do PR de SCP exception
+          # TODO: PATCH ADO WI with link to SCP exception PR
           echo "::warning::ADO update not yet implemented"
 
       - name: Post comment on original PR

@@ -20,7 +20,11 @@ jobs:
       pull-requests: write
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout workload repo
+        uses: actions/checkout@v4
+
+      - name: Checkout cloud-policies-check
+        uses: actions/checkout@v4
         with:
           repository: DanDanelli/cloud-policies-check
           path: policies

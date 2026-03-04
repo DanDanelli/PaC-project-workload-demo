@@ -1,7 +1,7 @@
 # ═══════════════════════════════════════════════════════════
-# WF2: ci-skip-detection.yml — Detecta checkov:skip e cria WIs
-# Modo Normal: detecta NOVOS skips no diff.
-# Modo Promoção (D-09): detecta TODOS os skips no codebase.
+# WF2: ci-skip-detection.yml — Detects checkov:skip and creates WIs
+# Normal mode: detects NEW skips in diff.
+# Promotion mode (D-09): detects ALL skips in codebase.
 # ═══════════════════════════════════════════════════════════
 name: Skip Detection
 
@@ -19,7 +19,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Histórico completo para git diff
+          fetch-depth: 0  # Complete history for git diff
 
       - name: Detect promotion mode (D-08, D-09)
         id: mode
@@ -31,7 +31,7 @@ jobs:
           if [[ "$BASE" =~ ^($PROMO_BRANCHES)$ ]] && \
              [[ "$HEAD" =~ ^($PROMO_BRANCHES)$ ]]; then
             echo "is_promotion=true" >> $GITHUB_OUTPUT
-            echo "MODE: Promoção ($HEAD → $BASE) — scan ALL skips"
+            echo "MODE: Promotion ($HEAD → $BASE) — scan ALL skips"
           else
             echo "is_promotion=false" >> $GITHUB_OUTPUT
             echo "MODE: Normal — scan NEW skips only"
@@ -49,12 +49,12 @@ jobs:
         id: scan
         run: |
           if [ "${{ steps.mode.outputs.is_promotion }}" = "true" ]; then
-            # Modo Promoção: scan ALL skips in codebase
+            # Promotion mode: scan ALL skips in codebase
             SKIPS=$(grep -rn 'checkov:skip\|checkov.io/skip' \
               --include='*.tf' --include='*.yml' --include='*.yaml' \
               ./infra/ || true)
           else
-            # Modo Normal: scan only NEW skips in PR diff
+            # Normal mode: scan only NEW skips in PR diff
             BASE="${{ github.base_ref }}"
             SKIPS=$(git diff origin/$BASE...HEAD --unified=0 \
               -- '*.tf' '*.yml' '*.yaml' '*.json' \
@@ -81,12 +81,12 @@ jobs:
           PR_URL: ${{ github.event.pull_request.html_url }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          # TODO: Implementar parsing de skips e criação de Work Items via ADO REST API
-          # Para cada skip:
-          #   1. Extrair rule_id, justificativa, arquivo, linha
-          #   2. Verificar idempotência (WIQL: já existe WI para rule_id + PR?)
-          #   3. Criar WI tipo "Security Exemption" se não existe
-          #   4. Adicionar tags: security-exemption, auto-created, env:$TARGET_ENV
+          # TODO: Implement parsing of skips and Work Item creation via ADO REST API
+          # For each skip:
+          #   1. Extract rule_id, justification, file, line
+          #   2. Check idempotency (WIQL: does WI already exist for rule_id + PR?)
+          #   3. Create "Security Exemption" type WI if it doesn't exist
+          #   4. Add tags: security-exemption, auto-created, env:$TARGET_ENV
           echo "::warning::Work Item creation not yet implemented"
 
       - name: Post PR comment
@@ -94,16 +94,16 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const mode = '${{ steps.mode.outputs.is_promotion }}' === 'true' ? 'Promoção' : 'Normal';
+            const mode = '${{ steps.mode.outputs.is_promotion }}' === 'true' ? 'Promotion' : 'Normal';
             const count = '${{ steps.scan.outputs.skip_count }}';
             const env = '${{ steps.mode.outputs.target_env }}';
 
-            let body = `## 🔍 Checkov Skips Detectados\n\n`;
-            body += `**Modo:** ${mode} | **Target:** \`${env}\` | **Skips:** ${count}\n\n`;
-            body += `| Rule | Arquivo | Justificativa | Work Item |\n`;
-            body += `|------|---------|---------------|-----------|\n`;
+            let body = `## 🔍 Checkov Skips Detected\n\n`;
+            body += `**Mode:** ${mode} | **Target:** \`${env}\` | **Skips:** ${count}\n\n`;
+            body += `| Rule | File | Justification | Work Item |\n`;
+            body += `|------|------|---------------|-----------|\n`;
             body += `| _TODO_ | _parse skips_ | _parse justification_ | _WI link_ |\n\n`;
-            body += `**Ação necessária:** Security Team deve revisar no [ADO Board](${{ secrets.ADO_ORG_URL }}/${{ secrets.ADO_PROJECT }}/_backlogs).\n\n`;
+            body += `**Action required:** Security Team must review on [ADO Board](${{ secrets.ADO_ORG_URL }}/${{ secrets.ADO_PROJECT }}/_backlogs).\n\n`;
             body += `/cc @org/security-team`;
 
             await github.rest.issues.createComment({
