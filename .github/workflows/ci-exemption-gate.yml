@@ -1,15 +1,14 @@
 # ═══════════════════════════════════════════════════════════
 # WF3: ci-exemption-gate.yml — Approval Gate Check
-# Checks if all exemption WIs are approved in ADO.
+# Checks if all exemption WIs for the PR are approved in ADO.
+# Triggered by comment /check-exemptions or ADO Service Hook.
 # Required status check: "Security Exemption Gate"
 # ═══════════════════════════════════════════════════════════
 name: Security Exemption Gate
 
 on:
-  # Manual trigger via comment on PR
   issue_comment:
     types: [created]
-  # Automatic trigger via ADO Service Hook
   repository_dispatch:
     types: [exemption-status-changed]
 
@@ -24,6 +23,7 @@ jobs:
     permissions:
       contents: read
       statuses: write
+      pull-requests: write
 
     steps:
       - name: Get PR info
@@ -31,58 +31,138 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
             PR_NUMBER="${{ github.event.client_payload.pr_number }}"
+            SHA="${{ github.event.client_payload.sha }}"
           else
             PR_NUMBER="${{ github.event.issue.number }}"
+            SHA=""
           fi
           echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
+          echo "sha=$SHA"            >> $GITHUB_OUTPUT
+
+      - name: Get PR SHA (for issue_comment trigger)
+        id: sha
+        if: github.event_name == 'issue_comment'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: parseInt('${{ steps.pr.outputs.pr_number }}')
+            });
+            core.setOutput('sha', pr.data.head.sha);
 
       - name: Query ADO for pending Work Items
         id: ado
         env:
-          ADO_PAT: ${{ secrets.ADO_PAT }}
+          ADO_PAT:     ${{ secrets.ADO_PAT }}
           ADO_ORG_URL: ${{ secrets.ADO_ORG_URL }}
           ADO_PROJECT: ${{ secrets.ADO_PROJECT }}
-          PR_NUMBER: ${{ steps.pr.outputs.pr_number }}
+          PR_NUMBER:   ${{ steps.pr.outputs.pr_number }}
         run: |
-          # TODO: Implement WIQL query
-          # SELECT [System.Id], [System.State]
-          # FROM workitems
-          # WHERE [System.Tags] CONTAINS 'security-exemption'
-          #   AND [Custom.PRLink] CONTAINS 'pull/$PR_NUMBER'
-          #   AND [System.State] NOT IN ('Approved', 'Rejected', 'Closed')
-          #
-          # If count == 0 → gate open
-          # If count > 0  → gate closed
+          pip install requests --quiet
 
-          echo "pending_count=0" >> $GITHUB_OUTPUT
-          echo "total_count=0" >> $GITHUB_OUTPUT
-          echo "approved_count=0" >> $GITHUB_OUTPUT
-          echo "::warning::ADO query not yet implemented — defaulting to gate open"
+          python3 << 'EOF'
+          import os, json, base64, requests
+
+          ado_pat     = os.environ['ADO_PAT']
+          ado_org_url = os.environ['ADO_ORG_URL'].rstrip('/')
+          ado_project = os.environ['ADO_PROJECT']
+          pr_number   = os.environ['PR_NUMBER']
+
+          token        = base64.b64encode(f':{ado_pat}'.encode()).decode()
+          json_headers = {'Authorization': f'Basic {token}', 'Content-Type': 'application/json'}
+
+          # Query all WIs tagged for this PR
+          wiql_all = {
+              "query": f"SELECT [System.Id],[System.State],[System.Title],[System.Tags] FROM workitems WHERE [System.TeamProject] = '{ado_project}' AND [System.Tags] CONTAINS 'security-exemption' AND [System.Tags] CONTAINS 'PR-{pr_number}'"
+          }
+          r = requests.post(f'{ado_org_url}/{ado_project}/_apis/wit/wiql?api-version=7.1', json=wiql_all, headers=json_headers)
+          r.raise_for_status()
+
+          all_wis = r.json().get('workItems', [])
+          total = len(all_wis)
+
+          if total == 0:
+              print('no_wis=true')
+              with open('/tmp/gate_result.json', 'w') as f:
+                  json.dump({'total': 0, 'pending': 0, 'approved': 0, 'items': []}, f)
+          else:
+              # Get full details for each WI
+              wi_ids = ','.join(str(w['id']) for w in all_wis)
+              r2 = requests.get(f'{ado_org_url}/{ado_project}/_apis/wit/workitems?ids={wi_ids}&fields=System.Id,System.State,System.Title,System.Tags&api-version=7.1', headers=json_headers)
+              r2.raise_for_status()
+              items = r2.json().get('value', [])
+
+              # "Done" = approved by Security Team
+              pending  = [i for i in items if i['fields']['System.State'] != 'Done']
+              approved = [i for i in items if i['fields']['System.State'] == 'Done']
+
+              result = {
+                  'total':    total,
+                  'pending':  len(pending),
+                  'approved': len(approved),
+                  'items':    [{'id': i['id'], 'title': i['fields']['System.Title'], 'state': i['fields']['System.State']} for i in items]
+              }
+              with open('/tmp/gate_result.json', 'w') as f:
+                  json.dump(result, f)
+
+              print(f'Total: {total} | Approved: {len(approved)} | Pending: {len(pending)}')
+          EOF
+
+          RESULT=$(cat /tmp/gate_result.json)
+          echo "total=$(echo    $RESULT | python3 -c 'import sys,json; print(json.load(sys.stdin)["total"])')"    >> $GITHUB_OUTPUT
+          echo "pending=$(echo  $RESULT | python3 -c 'import sys,json; print(json.load(sys.stdin)["pending"])')"  >> $GITHUB_OUTPUT
+          echo "approved=$(echo $RESULT | python3 -c 'import sys,json; print(json.load(sys.stdin)["approved"])')" >> $GITHUB_OUTPUT
 
       - name: Set commit status
         uses: actions/github-script@v7
+        env:
+          ADO_ORG_URL: ${{ secrets.ADO_ORG_URL }}
+          ADO_PROJECT: ${{ secrets.ADO_PROJECT }}
         with:
           script: |
-            const pending = parseInt('${{ steps.ado.outputs.pending_count }}');
-            const total = parseInt('${{ steps.ado.outputs.total_count }}');
-            const approved = parseInt('${{ steps.ado.outputs.approved_count }}');
+            const fs      = require('fs');
+            const pending  = parseInt('${{ steps.ado.outputs.pending }}')  || 0;
+            const total    = parseInt('${{ steps.ado.outputs.total }}')    || 0;
+            const approved = parseInt('${{ steps.ado.outputs.approved }}') || 0;
 
-            const state = (pending === 0) ? 'success' : 'failure';
-            const description = (total === 0)
+            const sha = '${{ steps.sha.outputs.sha || steps.pr.outputs.sha }}';
+            const state       = (pending === 0) ? 'success' : 'failure';
+            const description = total === 0
               ? 'No exemptions required'
-              : (pending === 0)
-                ? `All ${approved} exemptions approved`
-                : `${pending}/${total} exemptions pending review`;
+              : pending === 0
+                ? `All ${approved} exemption(s) approved ✅`
+                : `${pending}/${total} exemption(s) pending Security Team review`;
 
-            // TODO: Get SHA from PR
-            // await github.rest.repos.createCommitStatus({
-            //   owner: context.repo.owner,
-            //   repo: context.repo.repo,
-            //   sha: sha,
-            //   state: state,
-            //   description: description,
-            //   context: 'Security Exemption Gate',
-            //   target_url: `${process.env.ADO_ORG_URL}/${process.env.ADO_PROJECT}/_backlogs`
-            // });
+            await github.rest.repos.createCommitStatus({
+              owner:       context.repo.owner,
+              repo:        context.repo.repo,
+              sha:         sha,
+              state:       state,
+              description: description,
+              context:     'Security Exemption Gate',
+              target_url:  `${process.env.ADO_ORG_URL}/${process.env.ADO_PROJECT}/_backlogs`
+            });
 
-            console.log(`Gate status: ${state} — ${description}`);
+            // Post summary comment
+            const result = JSON.parse(fs.readFileSync('/tmp/gate_result.json', 'utf8'));
+            let rows = '';
+            for (const item of result.items || []) {
+              const icon = item.state === 'Done' ? '✅' : '⏳';
+              rows += `| #${item.id} | ${item.title} | ${icon} ${item.state} |\n`;
+            }
+
+            const body =
+              `## 🔐 Security Exemption Gate — ${state === 'success' ? '✅ Open' : '❌ Blocked'}\n\n` +
+              (total === 0
+                ? '_No exemption Work Items found for this PR._\n'
+                : `| WI | Title | Status |\n|----|----|------|\n${rows}\n`) +
+              (pending > 0 ? `\n> **${pending} WI(s) still pending.** Security Team must set them to **Done** in ADO, then re-run \`/check-exemptions\`.` : '');
+
+            await github.rest.issues.createComment({
+              owner:        context.repo.owner,
+              repo:         context.repo.repo,
+              issue_number: parseInt('${{ steps.pr.outputs.pr_number }}'),
+              body:         body
+            });

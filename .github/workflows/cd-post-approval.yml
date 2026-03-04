@@ -1,8 +1,17 @@
 # ═══════════════════════════════════════════════════════════
 # WF5: cd-post-approval.yml — SCP Exception (v1)
-# Called by ADO Service Hook when WI is approved.
-# Creates PR in aws-organizations-terraform repo to
-# add SCP exception.
+# Triggered by ADO Service Hook when a Security Exemption WI
+# is approved (moved to Done). Creates a PR in
+# __PaC-aws-organizations-terraform to add the SCP exception.
+#
+# ADO Service Hook payload (repository_dispatch):
+# {
+#   "work_item_id":   "123",
+#   "checkov_rule_id": "CKV_AWS_19",
+#   "resource_id":    "aws_s3_bucket.app_data",
+#   "target_env":     "prd",
+#   "pr_number":      "42"
+# }
 # ═══════════════════════════════════════════════════════════
 name: Post-Approval SCP Exception
 
@@ -13,87 +22,145 @@ on:
 jobs:
   create-scp-exception:
     runs-on: ubuntu-latest
-    # Phase 4 workflow — only triggered explicitly via repository_dispatch (ADO Service Hook).
-    # Requires secrets: AWS_ROLE_ARN, ORG_REPO_TOKEN, ADO_PAT, ADO_ORG_URL, ADO_PROJECT.
     permissions:
       contents: read
+      pull-requests: write
 
     steps:
       - name: Parse inputs
         id: inputs
         run: |
-          echo "work_item_id=${{ github.event.client_payload.work_item_id }}" >> $GITHUB_OUTPUT
+          echo "work_item_id=${{ github.event.client_payload.work_item_id }}"     >> $GITHUB_OUTPUT
           echo "checkov_rule_id=${{ github.event.client_payload.checkov_rule_id }}" >> $GITHUB_OUTPUT
-          echo "resource_id=${{ github.event.client_payload.resource_id }}" >> $GITHUB_OUTPUT
-          echo "target_env=${{ github.event.client_payload.target_env }}" >> $GITHUB_OUTPUT
-          echo "pr_number=${{ github.event.client_payload.pr_number }}" >> $GITHUB_OUTPUT
+          echo "resource_id=${{ github.event.client_payload.resource_id }}"       >> $GITHUB_OUTPUT
+          echo "target_env=${{ github.event.client_payload.target_env }}"         >> $GITHUB_OUTPUT
+          echo "pr_number=${{ github.event.client_payload.pr_number }}"           >> $GITHUB_OUTPUT
 
       - name: Checkout aws-organizations-terraform
         uses: actions/checkout@v4
         with:
-          repository: org/aws-organizations-terraform
+          repository: DanDanelli/__PaC-aws-organizations-terraform
           token: ${{ secrets.ORG_REPO_TOKEN }}
 
       - name: Create SCP exception file
+        id: exception
         run: |
           TARGET_ENV="${{ steps.inputs.outputs.target_env }}"
           RULE_ID="${{ steps.inputs.outputs.checkov_rule_id }}"
           WI_ID="${{ steps.inputs.outputs.work_item_id }}"
           RESOURCE_ID="${{ steps.inputs.outputs.resource_id }}"
+          BRANCH="scp-exception/WI-${WI_ID}-${RULE_ID}"
 
-          # TODO: Implement rule_id → SCP statement mapping
-          # Create file in scps/exceptions/
-          EXCEPTION_FILE="scps/exceptions/project-${RULE_ID}-WI${WI_ID}.json"
+          mkdir -p scps/exceptions
 
-          echo "::warning::SCP exception creation not yet fully implemented"
-          echo "Would create: $EXCEPTION_FILE"
-          echo "For resource: $RESOURCE_ID in $TARGET_ENV"
+          # Create the exception JSON file
+          cat > "scps/exceptions/${RULE_ID}-WI${WI_ID}.json" << JSON
+          {
+            "rule_id":      "${RULE_ID}",
+            "work_item_id": "${WI_ID}",
+            "resource_id":  "${RESOURCE_ID}",
+            "environment":  "${TARGET_ENV}",
+            "approved_at":  "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "pr_number":    "${{ steps.inputs.outputs.pr_number }}",
+            "status":       "approved"
+          }
+          JSON
+
+          echo "branch=$BRANCH" >> $GITHUB_OUTPUT
+          echo "exception_file=scps/exceptions/${RULE_ID}-WI${WI_ID}.json" >> $GITHUB_OUTPUT
 
       - name: Create PR in aws-organizations-terraform
+        id: scp_pr
         env:
           GH_TOKEN: ${{ secrets.ORG_REPO_TOKEN }}
         run: |
-          WI_ID="${{ steps.inputs.outputs.work_item_id }}"
+          BRANCH="${{ steps.exception.outputs.branch }}"
           RULE_ID="${{ steps.inputs.outputs.checkov_rule_id }}"
+          WI_ID="${{ steps.inputs.outputs.work_item_id }}"
+          PR_NUMBER="${{ steps.inputs.outputs.pr_number }}"
 
-          # TODO: Implement branch creation + PR
-          # git checkout -b "scp-exception/WI-${WI_ID}-${RULE_ID}"
-          # git add scps/exceptions/
-          # git commit -m "Add SCP exception for ${RULE_ID} (WI #${WI_ID})"
-          # git push origin "scp-exception/WI-${WI_ID}-${RULE_ID}"
-          # gh pr create --title "SCP Exception: ${RULE_ID}" --body "..."
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name  "github-actions[bot]"
 
-          echo "::warning::PR creation not yet implemented"
+          git checkout -b "$BRANCH"
+          git add scps/exceptions/
+          git commit -m "feat: add SCP exception for ${RULE_ID} (WI #${WI_ID})"
+          git push origin "$BRANCH"
+
+          PR_URL=$(gh pr create \
+            --title "SCP Exception: ${RULE_ID} (WI #${WI_ID})" \
+            --body "## SCP Exception Request
+
+          **Checkov Rule:** \`${RULE_ID}\`
+          **ADO Work Item:** #${WI_ID}
+          **Originating PR:** #${PR_NUMBER}
+          **Environment:** ${{ steps.inputs.outputs.target_env }}
+          **Resource:** \`${{ steps.inputs.outputs.resource_id }}\`
+
+          This exception was automatically generated after Security Team approval in ADO.
+          Security Team approval required for the SCP change before merging." \
+            --base main)
+
+          echo "scp_pr_url=$PR_URL" >> $GITHUB_OUTPUT
 
       - name: Update ADO Work Item with SCP PR link
         env:
-          ADO_PAT: ${{ secrets.ADO_PAT }}
+          ADO_PAT:     ${{ secrets.ADO_PAT }}
           ADO_ORG_URL: ${{ secrets.ADO_ORG_URL }}
           ADO_PROJECT: ${{ secrets.ADO_PROJECT }}
+          WI_ID:       ${{ steps.inputs.outputs.work_item_id }}
+          SCP_PR_URL:  ${{ steps.scp_pr.outputs.scp_pr_url }}
         run: |
-          WI_ID="${{ steps.inputs.outputs.work_item_id }}"
-          # TODO: PATCH ADO WI with link to SCP exception PR
-          echo "::warning::ADO update not yet implemented"
+          pip install requests --quiet
+
+          python3 << 'EOF'
+          import os, base64, requests
+
+          ado_pat     = os.environ['ADO_PAT']
+          ado_org_url = os.environ['ADO_ORG_URL'].rstrip('/')
+          ado_project = os.environ['ADO_PROJECT']
+          wi_id       = os.environ['WI_ID']
+          scp_pr_url  = os.environ['SCP_PR_URL']
+
+          token   = base64.b64encode(f':{ado_pat}'.encode()).decode()
+          headers = {'Authorization': f'Basic {token}', 'Content-Type': 'application/json-patch+json'}
+
+          # Add comment with SCP PR link
+          comment_url = f'{ado_org_url}/{ado_project}/_apis/wit/workitems/{wi_id}/comments?api-version=7.1-preview.3'
+          comment_headers = {'Authorization': f'Basic {token}', 'Content-Type': 'application/json'}
+          r = requests.post(comment_url, json={"text": f"SCP exception PR created: <a href='{scp_pr_url}'>{scp_pr_url}</a>"}, headers=comment_headers)
+          if r.status_code in (200, 201):
+              print(f'Comment added to WI #{wi_id}')
+          else:
+              print(f'Warning: could not add comment to WI: {r.status_code}')
+
+          # Update custom field or tag with SCP PR reference
+          patch_url = f'{ado_org_url}/{ado_project}/_apis/wit/workitems/{wi_id}?api-version=7.1'
+          body = [
+              {"op": "add", "path": "/fields/System.Tags", "value": f"security-exemption; scp-pr-created; scp-pr:{scp_pr_url}"},
+          ]
+          r2 = requests.patch(patch_url, json=body, headers=headers)
+          print(f'WI tag update: {r2.status_code}')
+          EOF
 
       - name: Post comment on original PR
         uses: actions/github-script@v7
         with:
           script: |
-            const prNumber = '${{ steps.inputs.outputs.pr_number }}';
-            const ruleId = '${{ steps.inputs.outputs.checkov_rule_id }}';
-            const wiId = '${{ steps.inputs.outputs.work_item_id }}';
+            const prNumber  = '${{ steps.inputs.outputs.pr_number }}';
+            const ruleId    = '${{ steps.inputs.outputs.checkov_rule_id }}';
+            const wiId      = '${{ steps.inputs.outputs.work_item_id }}';
+            const scpPrUrl  = '${{ steps.scp_pr.outputs.scp_pr_url }}';
 
-            // TODO: Include actual SCP PR link
-            const body = `## ✅ Exemption Approved\n\n` +
+            const body =
+              `## ✅ Security Exemption Approved\n\n` +
               `**Rule:** \`${ruleId}\` | **WI:** #${wiId}\n\n` +
-              `SCP exception PR will be created in aws-organizations-terraform.\n` +
-              `Security Team approval required for the SCP change.`;
+              `The SCP exception PR has been created: ${scpPrUrl}\n\n` +
+              `> Security Team approval on the SCP PR is required before this exemption takes full effect.`;
 
-            // await github.rest.issues.createComment({
-            //   owner: context.repo.owner,
-            //   repo: context.repo.repo,
-            //   issue_number: parseInt(prNumber),
-            //   body: body
-            // });
-
-            console.log(`Would post comment on PR #${prNumber}`);
+            await github.rest.issues.createComment({
+              owner:        context.repo.owner,
+              repo:         context.repo.repo,
+              issue_number: parseInt(prNumber),
+              body:         body
+            });

@@ -37,7 +37,6 @@ jobs:
             echo "MODE: Normal — scan NEW skips only"
           fi
 
-          # Detect target environment
           case "$BASE" in
             develop) echo "target_env=sandbox" >> $GITHUB_OUTPUT ;;
             non-prd) echo "target_env=non-prd" >> $GITHUB_OUTPUT ;;
@@ -65,10 +64,11 @@ jobs:
             echo "skip_count=0" >> $GITHUB_OUTPUT
             echo "No skips detected."
           else
-            SKIP_COUNT=$(echo "$SKIPS" | wc -l)
+            SKIP_COUNT=$(echo "$SKIPS" | wc -l | tr -d ' ')
             echo "skip_count=$SKIP_COUNT" >> $GITHUB_OUTPUT
             echo "$SKIPS" > /tmp/skips.txt
             echo "Detected $SKIP_COUNT skip(s)."
+            cat /tmp/skips.txt
           fi
 
       - name: Create Work Items in ADO
@@ -81,30 +81,102 @@ jobs:
           PR_URL: ${{ github.event.pull_request.html_url }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          # TODO: Implement parsing of skips and Work Item creation via ADO REST API
-          # For each skip:
-          #   1. Extract rule_id, justification, file, line
-          #   2. Check idempotency (WIQL: does WI already exist for rule_id + PR?)
-          #   3. Create "Security Exemption" type WI if it doesn't exist
-          #   4. Add tags: security-exemption, auto-created, env:$TARGET_ENV
-          echo "::warning::Work Item creation not yet implemented"
+          pip install requests --quiet
 
-      - name: Post PR comment
+          python3 << 'EOF'
+          import os, json, re, base64, requests
+
+          ado_pat     = os.environ['ADO_PAT']
+          ado_org_url = os.environ['ADO_ORG_URL'].rstrip('/')
+          ado_project = os.environ['ADO_PROJECT']
+          pr_number   = os.environ['PR_NUMBER']
+          pr_url      = os.environ['PR_URL']
+          target_env  = os.environ['TARGET_ENV']
+
+          token   = base64.b64encode(f':{ado_pat}'.encode()).decode()
+          headers = {'Authorization': f'Basic {token}', 'Content-Type': 'application/json-patch+json'}
+          json_headers = {'Authorization': f'Basic {token}', 'Content-Type': 'application/json'}
+
+          with open('/tmp/skips.txt') as f:
+              lines = [l.strip() for l in f if l.strip()]
+
+          results = []
+          for line in lines:
+              # Format: ./infra/main.tf:28:#checkov:skip=RULE_ID:justification
+              # or from diff: +#checkov:skip=RULE_ID:justification
+              m = re.search(r'checkov:skip=([^:\s]+):?(.*)', line)
+              if not m:
+                  continue
+              rule_id       = m.group(1).strip()
+              justification = m.group(2).strip() or 'No justification provided'
+
+              # Extract file:line from grep output (promotion mode)
+              fm = re.match(r'^\.?/?([\w/._-]+):(\d+):', line)
+              file_ref = f"{fm.group(1)}:{fm.group(2)}" if fm else 'unknown'
+
+              # Idempotency check — skip if WI already exists for this rule + PR
+              wiql = {"query": f"SELECT [System.Id] FROM workitems WHERE [System.TeamProject] = '{ado_project}' AND [System.Tags] CONTAINS 'security-exemption' AND [System.Tags] CONTAINS 'PR-{pr_number}' AND [System.Tags] CONTAINS '{rule_id}' AND [System.State] <> 'Closed'"}
+              r = requests.post(f'{ado_org_url}/{ado_project}/_apis/wit/wiql?api-version=7.1', json=wiql, headers=json_headers)
+              if r.status_code == 200 and r.json().get('workItems'):
+                  wi_id = r.json()['workItems'][0]['id']
+                  wi_url = f"{ado_org_url}/{ado_project}/_workitems/edit/{wi_id}"
+                  print(f'WI already exists for {rule_id}: #{wi_id}')
+                  results.append({'rule_id': rule_id, 'wi_id': wi_id, 'wi_url': wi_url, 'file': file_ref, 'justification': justification})
+                  continue
+
+              # Create Task Work Item
+              body = [
+                  {"op": "add", "path": "/fields/System.Title",       "value": f"Security Exemption: {rule_id} — PR #{pr_number}"},
+                  {"op": "add", "path": "/fields/System.Description", "value": f"<b>Rule:</b> {rule_id}<br><b>File:</b> {file_ref}<br><b>Justification:</b> {justification}<br><b>PR:</b> <a href='{pr_url}'>#{pr_number}</a><br><b>Environment:</b> {target_env}"},
+                  {"op": "add", "path": "/fields/System.Tags",        "value": f"security-exemption; PR-{pr_number}; {rule_id}; env:{target_env}; auto-created"},
+              ]
+              r = requests.post(f'{ado_org_url}/{ado_project}/_apis/wit/workitems/$Task?api-version=7.1', json=body, headers=headers)
+              if r.status_code == 200:
+                  wi = r.json()
+                  wi_id  = wi['id']
+                  wi_url = wi['_links']['html']['href']
+                  print(f'Created WI #{wi_id} for {rule_id}')
+                  results.append({'rule_id': rule_id, 'wi_id': wi_id, 'wi_url': wi_url, 'file': file_ref, 'justification': justification})
+              else:
+                  print(f'Error creating WI for {rule_id}: {r.status_code} — {r.text}')
+                  results.append({'rule_id': rule_id, 'wi_id': None, 'wi_url': None, 'file': file_ref, 'justification': justification})
+
+          with open('/tmp/wi_results.json', 'w') as f:
+              json.dump(results, f)
+
+          print(f'Done — {len(results)} WI(s) processed.')
+          EOF
+
+      - name: Post PR comment with WI links
         if: steps.scan.outputs.skip_count != '0'
         uses: actions/github-script@v7
         with:
           script: |
-            const mode = '${{ steps.mode.outputs.is_promotion }}' === 'true' ? 'Promotion' : 'Normal';
+            const fs = require('fs');
+            const mode  = '${{ steps.mode.outputs.is_promotion }}' === 'true' ? 'Promotion' : 'Normal';
             const count = '${{ steps.scan.outputs.skip_count }}';
-            const env = '${{ steps.mode.outputs.target_env }}';
+            const env   = '${{ steps.mode.outputs.target_env }}';
 
-            let body = `## 🔍 Checkov Skips Detected\n\n`;
-            body += `**Mode:** ${mode} | **Target:** \`${env}\` | **Skips:** ${count}\n\n`;
-            body += `| Rule | File | Justification | Work Item |\n`;
-            body += `|------|------|---------------|-----------|\n`;
-            body += `| _TODO_ | _parse skips_ | _parse justification_ | _WI link_ |\n\n`;
-            body += `**Action required:** Security Team must review on [ADO Board](${{ secrets.ADO_ORG_URL }}/${{ secrets.ADO_PROJECT }}/_backlogs).\n\n`;
-            body += `/cc @org/security-team`;
+            let rows = '';
+            try {
+              const results = JSON.parse(fs.readFileSync('/tmp/wi_results.json', 'utf8'));
+              for (const r of results) {
+                const wiLink = r.wi_id ? `[#${r.wi_id}](${r.wi_url})` : '⚠️ error';
+                rows += `| \`${r.rule_id}\` | \`${r.file}\` | ${r.justification} | ${wiLink} |\n`;
+              }
+            } catch(e) {
+              rows = '| _error reading results_ | — | — | — |\n';
+            }
+
+            const body =
+              `## 🔍 Checkov Skips Detected\n\n` +
+              `**Mode:** ${mode} | **Target:** \`${env}\` | **Skips:** ${count}\n\n` +
+              `| Rule | File | Justification | Work Item |\n` +
+              `|------|------|---------------|-----------|\n` +
+              rows + `\n` +
+              `**Action required:** Security Team must review and approve all Work Items above.\n` +
+              `Run \`/check-exemptions\` on this PR after approval to unblock merge.\n\n` +
+              `/cc @org/security-team`;
 
             await github.rest.issues.createComment({
               owner: context.repo.owner,
