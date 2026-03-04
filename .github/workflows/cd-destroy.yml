@@ -1,0 +1,81 @@
+# ═══════════════════════════════════════════════════════════
+# WF6: cd-destroy.yml — Terraform Destroy (manual only)
+# Destroys infrastructure for a given environment.
+# Must be triggered manually via GitHub Actions UI.
+# ═══════════════════════════════════════════════════════════
+name: Destroy Infrastructure
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to destroy"
+        required: true
+        type: choice
+        options:
+          - sandbox
+          - non-prd
+          - prd
+      confirm:
+        description: "Type DESTROY to confirm"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write  # OIDC federation with AWS
+
+jobs:
+  # ── Guard: validates confirmation input ──────────────────
+  validate:
+    runs-on: ubuntu-latest
+    outputs:
+      confirmed: ${{ steps.check.outputs.confirmed }}
+    steps:
+      - name: Validate confirmation
+        id: check
+        run: |
+          if [ "${{ inputs.confirm }}" = "DESTROY" ]; then
+            echo "confirmed=true" >> $GITHUB_OUTPUT
+            echo "Confirmation accepted. Proceeding with destroy."
+          else
+            echo "confirmed=false" >> $GITHUB_OUTPUT
+            echo "::error::Confirmation failed. You must type DESTROY exactly to proceed."
+            exit 1
+          fi
+
+  # ── Destroy job ──────────────────────────────────────────
+  destroy:
+    needs: validate
+    if: needs.validate.outputs.confirmed == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set tfvars path
+        id: env
+        run: |
+          echo "tfvars=infra/envs/${{ inputs.environment }}.tfvars" >> $GITHUB_OUTPUT
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.7.0"
+
+      - name: Terraform Init
+        working-directory: infra
+        run: terraform init -backend=false
+
+      - name: Terraform Destroy
+        working-directory: infra
+        run: |
+          terraform destroy \
+            -var-file="${{ steps.env.outputs.tfvars }}" \
+            -auto-approve
