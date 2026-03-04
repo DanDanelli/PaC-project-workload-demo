@@ -13,6 +13,7 @@ on:
 jobs:
   create-scp-exception:
     runs-on: ubuntu-latest
+    if: ${{ secrets.AWS_ROLE_ARN != '' }}  # Fase 4 — pula se AWS não configurado
     permissions:
       contents: read
 

@@ -1,10 +1,12 @@
-terraform {
-  backend "s3" {
-    # Configuração injetada via -backend-config no pipeline:
-    #   bucket         = "tfstate-<env>"
-    #   key            = "project-workload/terraform.tfstate"
-    #   region         = "us-east-1"
-    #   dynamodb_table = "terraform-locks"
-    #   encrypt        = true
-  }
-}
+# POC — state local (sem backend remoto)
+# Para produção, descomentar e configurar o backend S3:
+#
+# terraform {
+#   backend "s3" {
+#     bucket         = "pac-tfstate-<account_id>"
+#     key            = "workload/<env>/terraform.tfstate"
+#     region         = "us-east-1"
+#     dynamodb_table = "pac-tfstate-lock"
+#     encrypt        = true
+#   }
+# }
